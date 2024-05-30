@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.10.34916.146
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "CudaMaxCutPlanted", "CudaMaxCutPlanted\CudaMaxCutPlanted.vcxproj", "{A9DE3A53-02D9-42A9-A120-159FE909D177}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A9DE3A53-02D9-42A9-A120-159FE909D177}.Debug|x64.ActiveCfg = Debug|x64
+		{A9DE3A53-02D9-42A9-A120-159FE909D177}.Debug|x64.Build.0 = Debug|x64
+		{A9DE3A53-02D9-42A9-A120-159FE909D177}.Release|x64.ActiveCfg = Release|x64
+		{A9DE3A53-02D9-42A9-A120-159FE909D177}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {B2691E0C-155E-4120-A3C5-6BFAE0E28EE9}
+	EndGlobalSection
+EndGlobal
