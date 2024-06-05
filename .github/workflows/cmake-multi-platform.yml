@@ -62,3 +62,66 @@ jobs:
       # Execute tests defined by the CMake configuration. Note that --build-config is needed because the default Windows generator is a multi-config generator (Visual Studio generator).
       # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
       run: ctest --build-config ${{ matrix.build_type }}
+
+
+name: CUDA CMake Multi-Platform Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            cuda: '12.1.0'
+          - os: windows-latest
+            cuda: '12.1.0'
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up CUDA
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wget
+        wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-repo-ubuntu2004_${{ matrix.cuda }}-1_amd64.deb
+        sudo dpkg -i cuda-repo-ubuntu2004_${{ matrix.cuda }}-1_amd64.deb
+        sudo apt-key adv --fetch-keys http://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/7fa2af80.pub
+        sudo apt-get update
+        sudo apt-get -y install cuda
+      shell: bash
+
+    - name: Set up CUDA on Windows
+      if: matrix.os == 'windows-latest'
+      run: |
+        choco install cuda --version=${{ matrix.cuda }}
+      shell: powershell
+
+    - name: Add CUDA to PATH on Ubuntu
+      if: matrix.os == 'ubuntu-latest'
+      run: echo "/usr/local/cuda-${{ matrix.cuda }}/bin" >> $GITHUB_PATH
+      shell: bash
+
+    - name: Add CUDA to PATH on Windows
+      if: matrix.os == 'windows-latest'
+      run: echo "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v${{ matrix.cuda }}\\bin" >> $Env:GITHUB_PATH
+      shell: powershell
+
+    - name: Configure CMake
+      run: mkdir build && cd build && cmake ..
+      shell: bash
+
+    - name: Build with CMake
+      run: cmake --build build --config Release
+      shell: bash
+

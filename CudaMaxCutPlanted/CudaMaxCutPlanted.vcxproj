@@ -43,6 +43,11 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <PublicIncludeDirectories>
+    </PublicIncludeDirectories>
+    <ExternalIncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(CUDA_PATH)\include</ExternalIncludePath>
+  </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
@@ -81,13 +86,19 @@
       <TargetMachinePlatform>64</TargetMachinePlatform>
       <AdditionalOptions>-allow-unsupported-compiler %(AdditionalOptions)</AdditionalOptions>
       <Runtime>MT</Runtime>
+      <Defines>__CUDACC__</Defines>
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <CudaCompile Include="CudaSparseMatrix.cu" />
     <CudaCompile Include="kernel.cu" />
+    <CudaCompile Include="SparseMatrixSumKernel.cu" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="CudaSparseMatrix.hpp" />
     <ClInclude Include="indicators.hpp" />
+    <ClInclude Include="intellisense_cuda_intrinsics.h" />
+    <ClInclude Include="SparseMatrixSumKernel.cuh" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

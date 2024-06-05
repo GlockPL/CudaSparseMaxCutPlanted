@@ -17,6 +17,10 @@
 #include <iostream>
 #include <iomanip>
 #include "indicators.hpp"
+#ifdef __INTELLISENSE__
+#include "intellisense_cuda_intrinsics.h"
+#endif
+
 
 #define CHECK_CUSPARSE(call)                                    \
 {                                                               \
