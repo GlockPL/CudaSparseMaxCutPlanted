@@ -18,9 +18,9 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         include:
           - os: ubuntu-latest
-            cuda: '12.1.0'
+            cuda: '12.1'
           - os: windows-latest
-            cuda: '12.1.0'
+            cuda: '12.1'
     steps:
     - name: Checkout repository
       uses: actions/checkout@v2
@@ -28,11 +28,11 @@ jobs:
     - name: Set up CUDA
       if: matrix.os == 'ubuntu-latest'
       run: |
-        sudo apt-get update
-        sudo apt-get install -y wget
-        wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-repo-ubuntu2004_${{ matrix.cuda }}-1_amd64.deb
-        sudo dpkg -i cuda-repo-ubuntu2004_${{ matrix.cuda }}-1_amd64.deb
-        sudo apt-key adv --fetch-keys http://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/7fa2af80.pub
+        wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-ubuntu2004.pin
+        sudo mv cuda-ubuntu2004.pin /etc/apt/preferences.d/cuda-repository-pin-600
+        wget https://developer.download.nvidia.com/compute/cuda/12.1.0/local_installers/cuda-repo-ubuntu2004-12-1-local_12.1.0-530.30.02-1_amd64.deb
+        sudo dpkg -i cuda-repo-ubuntu2004-12-1-local_12.1.0-530.30.02-1_amd64.deb
+        sudo cp /var/cuda-repo-ubuntu2004-12-1-local/cuda-*-keyring.gpg /usr/share/keyrings/
         sudo apt-get update
         sudo apt-get -y install cuda
       shell: bash
@@ -40,19 +40,17 @@ jobs:
     - name: Set up CUDA on Windows
       if: matrix.os == 'windows-latest'
       run: |
-        choco install cuda --version=${{ matrix.cuda }}
+          Invoke-WebRequest https://raw.githubusercontent.com/KonduitAI/cuda-install/master/.github/actions/install-cuda-windows/install_cuda_windows.ps1 -OutFile install_cuda_windows.ps1 | Out-Null
+          .\install_cuda_windows.ps1
+          echo "CUDA_PATH=$($CUDA_PATH))" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "$($CUDA_PATH))\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       shell: powershell
 
     - name: Add CUDA to PATH on Ubuntu
       if: matrix.os == 'ubuntu-latest'
       run: echo "/usr/local/cuda-${{ matrix.cuda }}/bin" >> $GITHUB_PATH
       shell: bash
-
-    - name: Add CUDA to PATH on Windows
-      if: matrix.os == 'windows-latest'
-      run: echo "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v${{ matrix.cuda }}\\bin" >> $Env:GITHUB_PATH
-      shell: powershell
-
+      
     - name: Configure CMake
       run: mkdir build && cd build && cmake ..
       shell: bash
