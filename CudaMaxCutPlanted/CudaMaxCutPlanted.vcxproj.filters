@@ -5,9 +5,10 @@
     <CudaCompile Include="CudaSparseMatrix.cu">
       <Filter>Objects</Filter>
     </CudaCompile>
-    <CudaCompile Include="SparseMatrixSumKernel.cu">
+    <CudaCompile Include="Kernels.cu">
       <Filter>Objects</Filter>
     </CudaCompile>
+    <CudaCompile Include="main.cu" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="indicators.hpp" />
@@ -17,7 +18,7 @@
     <ClInclude Include="intellisense_cuda_intrinsics.h">
       <Filter>Objects</Filter>
     </ClInclude>
-    <ClInclude Include="SparseMatrixSumKernel.cuh">
+    <ClInclude Include="Kernels.cuh">
       <Filter>Objects</Filter>
     </ClInclude>
   </ItemGroup>

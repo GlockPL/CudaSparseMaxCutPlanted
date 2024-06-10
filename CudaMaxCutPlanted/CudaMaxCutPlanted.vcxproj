@@ -92,13 +92,14 @@
   <ItemGroup>
     <CudaCompile Include="CudaSparseMatrix.cu" />
     <CudaCompile Include="kernel.cu" />
-    <CudaCompile Include="SparseMatrixSumKernel.cu" />
+    <CudaCompile Include="main.cu" />
+    <CudaCompile Include="Kernels.cu" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="CudaSparseMatrix.hpp" />
     <ClInclude Include="indicators.hpp" />
     <ClInclude Include="intellisense_cuda_intrinsics.h" />
-    <ClInclude Include="SparseMatrixSumKernel.cuh" />
+    <ClInclude Include="Kernels.cuh" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
