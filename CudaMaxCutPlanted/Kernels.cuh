@@ -22,4 +22,6 @@ __global__ void non_zero_elements(const int* I, const int* J, bool* non_zero_ele
 __global__ void set_diagonal(int* I, int* J, float* V, bool* non_zero_elements, const float* diagonal, int initial_n, int resize_n);
 // Count and sets bool vector for zero elements inside float device vector
 __global__ void zero_elements(const float* input_vect, bool* zero_elements_vect, int* zero_sum, int n);
+// Converts on device char vector to float vector
+__global__ void char_to_float(const char* input, float* output, int n);
 #endif // KERNELS_CUH

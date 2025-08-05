@@ -22,13 +22,23 @@ __global__ void sum_axis(int nnz, const int* d_non_offset_axis_ind, const float*
 
 __global__ void create_random_matrix(int n, int nnz, int split, const int* p, int* d_rows, int* d_cols, float* d_vals, curandState* states) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < nnz) {
+    int half_nnz = nnz / 2;  // Number of unique edges (before making symmetric)
+    
+    if (idx < half_nnz) {
         curand_init(1234, idx, 0, &states[idx]);
         int i = static_cast<int>(floorf(idx / (n - split)));
         int j = static_cast<int>((idx % (n - split)) + split);
+        float weight = curand_uniform(&states[idx]) * 0.99f + 0.01f;
+        
+        // Create edge (i,j)
         d_rows[idx] = p[i];
         d_cols[idx] = p[j];
-        d_vals[idx] = curand_uniform(&states[idx]) * 0.99f + 0.01f;
+        d_vals[idx] = weight;
+        
+        // Create symmetric edge (j,i) with same weight
+        d_rows[idx + half_nnz] = p[j];
+        d_cols[idx + half_nnz] = p[i];
+        d_vals[idx + half_nnz] = weight;
     }
 }
 
@@ -44,7 +54,7 @@ __global__ void non_zero_elements(const int* I, const int* J, bool* non_zero_ele
     if (idx < nnz) {
         if (I[idx] == J[idx]) {
             atomicAdd(nnz_sum, 1);
-            non_zero_elements[idx] == true;
+            non_zero_elements[idx] = true;
         }
         
     }
@@ -134,4 +144,9 @@ __global__ void prescan(float* g_odata, float* g_idata, int n) {
     g_odata[bi] = temp[bi + bankOffsetB];
 }
 
-
+__global__ void char_to_float(const char* input, float* output, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n) {
+        output[idx] = static_cast<float>(input[idx]);
+    }
+}

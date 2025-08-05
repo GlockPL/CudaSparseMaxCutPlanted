@@ -1,31 +1,43 @@
-cmake_minimum_required(VERSION 3.12)
-project(CudaMaxCutPlanted LANGUAGES CXX CUDA)
+# Find required packages
+find_package(CUDAToolkit REQUIRED)
 
-# Specify the C++ standard
-set(CMAKE_CXX_STANDARD 14)
-set(CMAKE_CXX_STANDARD_REQUIRED True)
+# Add executable with all source files
+add_executable(CudaMaxCutPlanted 
+    main.cu 
+    kernel.cu 
+    Kernels.cu 
+    CudaSparseMatrix.cu
+)
 
-set(CMAKE_CUDA_ARCHITECTURES 60 70 75 80)
+# Set properties for CUDA compilation
+set_property(TARGET CudaMaxCutPlanted PROPERTY CUDA_ARCHITECTURES ${CMAKE_CUDA_ARCHITECTURES})
 
-# Find CUDA
-find_package(CUDA REQUIRED)
-include_directories(${CUDA_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR})
+# Include directories
+target_include_directories(CudaMaxCutPlanted PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-# Enable CUDA support
-enable_language(CUDA)
+# Link CUDA libraries using modern CMake targets
+target_link_libraries(CudaMaxCutPlanted 
+    PRIVATE 
+    CUDA::cudart
+    CUDA::cublas
+    CUDA::cusparse
+    CUDA::curand
+)
 
-# Add executable
-add_executable(CudaMaxCutPlanted kernel.cu)
+# Set compiler flags for better compatibility
+if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA")
+    target_compile_options(CudaMaxCutPlanted PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:
+            --extended-lambda
+            --expt-relaxed-constexpr
+        >
+    )
+endif()
 
-# Link CUDA libraries
-target_link_libraries(CudaMaxCutPlanted ${CUDA_LIBRARIES})
-
-## Link directories for CUDA, cuBLAS, and cuSPARSE
-link_directories(${CUDA_TOOLKIT_ROOT_DIR}/lib64)
-
-# Include directories for cuBLAS and cuSPARSE
-include_directories(${CUBLAS_INCLUDE_DIRS} ${CUSPARSE_INCLUDE_DIRS})
-
-# Link cuBLAS and cuSPARSE libraries
-target_link_libraries(CudaMaxCutPlanted ${CUDA_TOOLKIT_ROOT_DIR}/lib64/libcublas.so)
-target_link_libraries(CudaMaxCutPlanted ${CUDA_TOOLKIT_ROOT_DIR}/lib64/libcusparse.so)
+# Set runtime library path on Linux
+if(UNIX AND NOT APPLE)
+    set_target_properties(CudaMaxCutPlanted PROPERTIES
+        BUILD_RPATH_USE_ORIGIN TRUE
+        INSTALL_RPATH "$ORIGIN/../lib:$ORIGIN/"
+    )
+endif()

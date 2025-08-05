@@ -2,11 +2,23 @@
 
 #include <iostream>
 #include <iomanip>
+#include <cublas_v2.h>
 
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 #include <thrust/device_ptr.h>
 #include <thrust/sort.h>
+
+#define CHECK_CUBLAS(call)                                        \
+{                                                                 \
+    cublasStatus_t err = call;                                    \
+    if (err != CUBLAS_STATUS_SUCCESS) {                           \
+        std::cerr << "CUBLAS error in file " << __FILE__          \
+                  << " at line " << __LINE__ << ": "            \
+                  << "Error code " << err << std::endl;      \
+        exit(EXIT_FAILURE);                                       \
+    }                                                             \
+}
 
 
 const char* cusparseGetErrorString(cusparseStatus_t status) {
@@ -210,7 +222,7 @@ bool* CudaSparseMatrix::non_zero_diagonal(int& nnz_diag_sum)
     return nnz_diag;
 }
 
-CudaDenseVector CudaSparseMatrix::dot(const float* d_vec)
+CudaDenseVector CudaSparseMatrix::dot(const float* d_vec) const
 {
     float alpha = 1.0f;
     float beta = 0.0f;
@@ -520,14 +532,38 @@ CudaDenseVector::CudaDenseVector(int size, const float* V, MemoryType memType): 
     cudaMemcpyKind copyType = memType == MemoryType::Host ? cudaMemcpyHostToDevice : cudaMemcpyDeviceToDevice;
 
     CHECK_CUDA(cudaMalloc((void**)&d_data_, size_ * sizeof(float)));
-    CHECK_CUDA(cudaMemcpy(d_data_, V, size_ * sizeof(int), copyType));
+    CHECK_CUDA(cudaMemcpy(d_data_, V, size_ * sizeof(float), copyType));
     CHECK_CUSPARSE(cusparseCreateDnVec(&vecDescr_, size_, d_data_, CUDA_R_32F));
 }
 
-CudaDenseVector::CudaDenseVector(int size)
+CudaDenseVector::CudaDenseVector(int size) : size_(size)
 {
-    thrust::device_vector<float> input_vect = thrust::device_vector<float>(size_, 0.0f);
-    CudaDenseVector(size_, thrust::raw_pointer_cast(input_vect.data()), MemoryType::Device);
+    CHECK_CUDA(cudaMalloc((void**)&d_data_, size_ * sizeof(float)));
+    CHECK_CUDA(cudaMemset(d_data_, 0, size_ * sizeof(float)));
+    CHECK_CUSPARSE(cusparseCreateDnVec(&vecDescr_, size_, d_data_, CUDA_R_32F));
+}
+
+CudaDenseVector::CudaDenseVector(const CudaDenseVector& other) : size_(other.size_)
+{
+    CHECK_CUDA(cudaMalloc((void**)&d_data_, size_ * sizeof(float)));
+    CHECK_CUDA(cudaMemcpy(d_data_, other.d_data_, size_ * sizeof(float), cudaMemcpyDeviceToDevice));
+    CHECK_CUSPARSE(cusparseCreateDnVec(&vecDescr_, size_, d_data_, CUDA_R_32F));
+}
+
+CudaDenseVector& CudaDenseVector::operator=(const CudaDenseVector& other)
+{
+    if (this != &other) {
+        // Clean up existing resources
+        CHECK_CUSPARSE(cusparseDestroyDnVec(vecDescr_));
+        CHECK_CUDA(cudaFree(d_data_));
+        
+        // Copy from other
+        size_ = other.size_;
+        CHECK_CUDA(cudaMalloc((void**)&d_data_, size_ * sizeof(float)));
+        CHECK_CUDA(cudaMemcpy(d_data_, other.d_data_, size_ * sizeof(float), cudaMemcpyDeviceToDevice));
+        CHECK_CUSPARSE(cusparseCreateDnVec(&vecDescr_, size_, d_data_, CUDA_R_32F));
+    }
+    return *this;
 }
 
 CudaDenseVector::~CudaDenseVector()
@@ -549,4 +585,25 @@ float* CudaDenseVector::data() const
 cusparseDnVecDescr_t CudaDenseVector::get() const
 {
     return vecDescr_;
+}
+
+float CudaDenseVector::dot(const CudaDenseVector v)
+{
+    if (size_ != v.size()) {
+        std::cerr << "Vector sizes do not match for dot product: " << size_ << " vs " << v.size() << std::endl;
+        exit(EXIT_FAILURE);
+    }
+    
+    // Create cuBLAS handle
+    cublasHandle_t cublasHandle;
+    CHECK_CUBLAS(cublasCreate(&cublasHandle));
+    
+    // Compute dot product using cuBLAS
+    float result;
+    CHECK_CUBLAS(cublasSdot(cublasHandle, size_, d_data_, 1, v.data(), 1, &result));
+    
+    // Cleanup
+    CHECK_CUBLAS(cublasDestroy(cublasHandle));
+    
+    return result;
 }

@@ -64,11 +64,14 @@ class CudaDenseVector {
 public:
     CudaDenseVector(int size, const float* V, MemoryType memType);
     CudaDenseVector(int size);
+    CudaDenseVector(const CudaDenseVector& other);
+    CudaDenseVector& operator=(const CudaDenseVector& other);
     ~CudaDenseVector();
 
     int size() const;
     float* data() const;
     cusparseDnVecDescr_t get() const;
+    float dot(const CudaDenseVector v);
 
 private:
     int size_;
@@ -85,7 +88,7 @@ public:
     void updateData(const int* rows, const int* cols, const float* vals, int new_nnz, SparseType sparseType, MemoryType memType);
     void fill_diagonal(const float* diagonal_vect);
     bool* non_zero_diagonal(int& nnz_diag_sum);
-    CudaDenseVector dot(const float* d_vec);
+    CudaDenseVector dot(const float* d_vec) const;
     void multiply(float value);
     float* sum(int axis);
     void display();
