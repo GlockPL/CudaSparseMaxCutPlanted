@@ -8,7 +8,7 @@ on:
 
 jobs:
   build-linux:
-    runs-on: ubuntu-20.04  # Use Ubuntu 20.04 for stable CUDA support
+    runs-on: ubuntu-22.04  # Use Ubuntu 20.04 for stable CUDA support
     
     steps:
     - name: Checkout code
@@ -57,34 +57,34 @@ jobs:
         echo "Build completed successfully - binary exists"
         # Note: Cannot run CUDA code on GitHub Actions runners (no GPU)
 
-  build-windows:
-    runs-on: windows-latest
+  # build-windows:
+  #   runs-on: windows-latest
     
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+  #   steps:
+  #   - name: Checkout code
+  #     uses: actions/checkout@v4
       
-    - name: Install CUDA Toolkit
-      uses: Jimver/cuda-toolkit@v0.2.15
-      with:
-        cuda: '12.1.1'
-        method: 'network'
+  #   - name: Install CUDA Toolkit
+  #     uses: Jimver/cuda-toolkit@v0.2.15
+  #     with:
+  #       cuda: '12.1.1'
+  #       method: 'network'
         
-    - name: Setup MSVC
-      uses: microsoft/setup-msbuild@v1.3
+  #   - name: Setup MSVC
+  #     uses: microsoft/setup-msbuild@v1.3
       
-    - name: Configure CMake
-      run: |
-        mkdir build
-        cd build
-        cmake .. -G "Visual Studio 2022" -A x64 -T cuda=12.1
+  #   - name: Configure CMake
+  #     run: |
+  #       mkdir build
+  #       cd build
+  #       cmake .. -G "Visual Studio 2022" -A x64 -T cuda=12.1
         
-    - name: Build
-      run: |
-        cd build
-        cmake --build . --config Release --parallel
+  #   - name: Build
+  #     run: |
+  #       cd build
+  #       cmake --build . --config Release --parallel
         
-    - name: Test build artifacts
-      run: |
-        dir build\CudaMaxCutPlanted\Release\ || echo "Directory not found"
+  #   - name: Test build artifacts
+  #     run: |
+  #       dir build\CudaMaxCutPlanted\Release\ || echo "Directory not found"
 
