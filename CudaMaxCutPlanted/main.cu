@@ -316,8 +316,8 @@ int estimate_split(float density, int n) {
 
 
 int main() {
-    int n = 20;
-    int seed = 14;
+    int n = 14;
+    int seed = 8848;
     float density = 0.5;
     int* I, * J;
     float* V;

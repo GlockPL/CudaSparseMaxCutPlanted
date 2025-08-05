@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.17)
 project(CudaMaxCutPlanted LANGUAGES CXX CUDA)
 
 # Set CUDA standard
@@ -10,7 +10,7 @@ find_package(CUDAToolkit REQUIRED)
 
 # Set CUDA architectures for GitHub Actions compatibility
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-    set(CMAKE_CUDA_ARCHITECTURES "60;70;75;80;86")
+    set(CMAKE_CUDA_ARCHITECTURES "60;70;75;80")
 endif()
 
 # Add subdirectory where the source files are located
