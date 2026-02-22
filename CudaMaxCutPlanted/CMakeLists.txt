@@ -7,6 +7,7 @@ add_executable(CudaMaxCutPlanted
     kernel.cu 
     Kernels.cu 
     CudaSparseMatrix.cu
+    device_properties.cu
 )
 
 # Set properties for CUDA compilation

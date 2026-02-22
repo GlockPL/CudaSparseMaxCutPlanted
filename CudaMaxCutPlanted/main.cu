@@ -1,8 +1,11 @@
 #include "CudaSparseMatrix.hpp"
+#include "device_properties.cuh"
 #include <cublas_v2.h>
 #include <thrust/host_vector.h>
 #include <thrust/device_ptr.h>
 #include <thrust/sort.h>
+#include <thrust/gather.h>
+#include <thrust/sequence.h>
 #include <random>
 #include <curand_kernel.h>
 #include <limits>
@@ -25,7 +28,13 @@
     }                                                             \
 }
 
-
+#define CUDA_PRINT_MEM(label) {                               \
+      size_t _free, _total;                                     \
+      cudaMemGetInfo(&_free, &_total);                          \
+      printf("[MEM] %-40s  used=%6zu MB  free=%6zu MB\n",      \
+          label,                                                \
+          (_total-_free)/(1024*1024), _free/(1024*1024));       \
+  }
 
 
 
@@ -124,43 +133,83 @@ int* generate_initial_permutation(std::mt19937& rng, int n) {
 void create_graph_sparse(int n, int nnz, int split, const int* p, int *I, int* J, float* V) {
 
     curandState* states;
-    int half_nnz = nnz / 2;  // Each thread creates 2 symmetric edges
-    CHECK_CUDA(cudaMalloc((void**)&states, half_nnz * sizeof(states)));
-    int gridSize = (half_nnz + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    int half_nnz = nnz / 2;
+    
+    // We want to launch enough threads to keep the GPU busy, but not an excessive amount.
+    // Let's aim for a high number of threads, e.g., 256*1024, but not more than half_nnz.
+    int num_threads_to_launch = std::min(half_nnz, 256 * 1024);
+    int gridSize = (num_threads_to_launch + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    int num_threads = gridSize * BLOCK_SIZE;
 
-    create_random_matrix << <gridSize, BLOCK_SIZE >> > (n, nnz, split, p, I, J, V, states);
+    std::cout << "Kernel launch parameters: half_nnz=" << half_nnz << ", split=" << split << ", n-split=" << (n-split) << std::endl;
+    std::cout << "Launching " << num_threads << " threads in " << gridSize << " blocks." << std::endl;
 
+    // Validate expected number of edges
+    long long expected_edges = (long long)split * (n - split);
+    if (half_nnz != expected_edges) {
+        std::cerr << "WARNING: half_nnz (" << half_nnz << ") != expected_edges (" << expected_edges << ")" << std::endl;
+    }
+    
+    CHECK_CUDA(cudaMalloc((void**)&states, num_threads * sizeof(curandState)));
+    
+    // Initialize random states
+    setup_kernel<<<gridSize, BLOCK_SIZE>>>(1234, states);
+    CHECK_CUDA(cudaGetLastError());
+    CUDA_PRINT_MEM("After setup kernel");
+    // Create the random matrix
+    create_random_matrix<<<gridSize, BLOCK_SIZE>>>(n, nnz, split, p, I, J, V, states);
+    CHECK_CUDA(cudaGetLastError());
+    CUDA_PRINT_MEM("After create random matrix");
     CHECK_CUDA(cudaDeviceSynchronize());
 
-    // Wrap raw device pointers in thrust device pointers for sorting
-    thrust::device_ptr<int> dev_I(I);
-    thrust::device_ptr<int> dev_J(J);
-    thrust::device_ptr<float> dev_V(V);
+    // Single-pass sort using a combined int64 key (I*n + J).
+    // Avoids two passes of stable_sort_by_key (merge sort, ~2x temp per pass).
+    long long* d_sort_keys;
+    CHECK_CUDA(cudaMalloc((void**)&d_sort_keys, nnz * sizeof(long long)));
 
-    // First, sort by the secondary key (J) using stable sort
-    thrust::stable_sort_by_key(dev_J, dev_J + nnz, thrust::make_zip_iterator(thrust::make_tuple(dev_I, dev_V)));
+    int gridSizeKeys = (nnz + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    make_sort_keys<<<gridSizeKeys, BLOCK_SIZE>>>(I, J, n, d_sort_keys, nnz);
+    CHECK_CUDA(cudaGetLastError());
+    CUDA_PRINT_MEM("After make sort keys");
 
-    // Then, sort by the primary key (I) using stable sort to maintain the order of the secondary key
-    thrust::stable_sort_by_key(dev_I, dev_I + nnz, thrust::make_zip_iterator(thrust::make_tuple(dev_J, dev_V)));
+    // Sort a permutation array by the combined key.
+    // sort_by_key(int64, int) uses CUB radix sort — temp = nnz*12 bytes (one output copy
+    // of keys + values). The zip approach used merge sort needing ~2x full data = OOM.
+    int* d_perm;
+    CHECK_CUDA(cudaMalloc((void**)&d_perm, nnz * sizeof(int)));
+    thrust::sequence(thrust::device_ptr<int>(d_perm), thrust::device_ptr<int>(d_perm + nnz));
 
+    thrust::device_ptr<long long> dev_keys(d_sort_keys);
+    thrust::sort_by_key(dev_keys, dev_keys + nnz, thrust::device_ptr<int>(d_perm));
+    CHECK_CUDA(cudaFree(d_sort_keys));
+    CUDA_PRINT_MEM("After sorting keys");
 
-    int* h_rows = new int[nnz];
-    int* h_cols = new int[nnz];
-    float* h_vals = new float[nnz];
-    
+    // Gather I, J, V in sorted order one array at a time to keep peak memory low.
+    // Peak per gather: I+J+V (live) + perm + one temp = 5x nnz*4 bytes.
+    int* d_temp_int;
+    CHECK_CUDA(cudaMalloc((void**)&d_temp_int, nnz * sizeof(int)));
 
-    CHECK_CUDA(cudaMemcpy(h_rows, I, nnz * sizeof(int), cudaMemcpyDeviceToHost));
-    CHECK_CUDA(cudaMemcpy(h_cols, J, nnz * sizeof(int), cudaMemcpyDeviceToHost));
-    CHECK_CUDA(cudaMemcpy(h_vals, V, nnz * sizeof(float), cudaMemcpyDeviceToHost));
+    thrust::gather(thrust::device_ptr<int>(d_perm), thrust::device_ptr<int>(d_perm + nnz),
+        thrust::device_ptr<int>(I), thrust::device_ptr<int>(d_temp_int));
+    CHECK_CUDA(cudaMemcpy(I, d_temp_int, nnz * sizeof(int), cudaMemcpyDeviceToDevice));
 
-    for (int i = 0; i < nnz; ++i) {
-        std::cout << "I: " << h_rows[i] << " J: " << h_cols[i] << " V: " << h_vals[i] << std::endl;
-    }
+    thrust::gather(thrust::device_ptr<int>(d_perm), thrust::device_ptr<int>(d_perm + nnz),
+        thrust::device_ptr<int>(J), thrust::device_ptr<int>(d_temp_int));
+    CHECK_CUDA(cudaMemcpy(J, d_temp_int, nnz * sizeof(int), cudaMemcpyDeviceToDevice));
+
+    CHECK_CUDA(cudaFree(d_temp_int));
+
+    float* d_temp_float;
+    CHECK_CUDA(cudaMalloc((void**)&d_temp_float, nnz * sizeof(float)));
+    thrust::gather(thrust::device_ptr<int>(d_perm), thrust::device_ptr<int>(d_perm + nnz),
+        thrust::device_ptr<float>(V), thrust::device_ptr<float>(d_temp_float));
+    CHECK_CUDA(cudaMemcpy(V, d_temp_float, nnz * sizeof(float), cudaMemcpyDeviceToDevice));
+    CHECK_CUDA(cudaFree(d_temp_float));
+
+    CHECK_CUDA(cudaFree(d_perm));
+    CUDA_PRINT_MEM("After gather");
 
     CHECK_CUDA(cudaFree(states));
-    delete[] h_rows;
-    delete[] h_cols;
-    delete[] h_vals;   
 }
 
 char* generate_solution(const int* p, int split, int n) {
@@ -176,7 +225,7 @@ char* generate_solution(const int* p, int split, int n) {
 }
 
 void graph_to_qubo(CudaSparseMatrix& Q) {
-    float* row_sum = Q.sum(0);
+    float* row_sum = Q.sum(1);
     Q.multiply(-1.0f);
     Q.fill_diagonal(row_sum);
     Q.multiply(-0.25f);
@@ -315,28 +364,82 @@ int estimate_split(float density, int n) {
 }
 
 
-int main() {
-    int n = 14;
+int main(int argc, char* argv[]) {
+    printGpuProperties();
+    int n = 60000; // Default value
+
+    // --- Argument Parsing ---
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "-n") {
+            if (i + 1 < argc) { // Make sure we aren't at the end of argv
+                try {
+                    n = std::stoi(argv[++i]);
+                }
+                catch (const std::invalid_argument& ia) {
+                    std::cerr << "Invalid argument: -n must be followed by an integer." << std::endl;
+                    return 1;
+                }
+                catch (const std::out_of_range& oor) {
+                    std::cerr << "Argument out of range for -n." << std::endl;
+                    return 1;
+                }
+            } else {
+                std::cerr << "-n option requires one argument." << std::endl;
+                return 1;
+            }
+        }
+    }
+    // --- End Argument Parsing ---
+
     int seed = 8848;
-    float density = 0.5;
+    float density = 0.1;
     int* I, * J;
     float* V;
     std::mt19937 rng(seed);
 
     int* p = generate_initial_permutation(rng, n);
-
+    CUDA_PRINT_MEM("After intial permutation");
     int split = estimate_split(density, n);  // Example split, can be computed as needed
-    int nnz = 2 * split * (n - split);  // Double for symmetric graph
+    
+    // Check for integer overflow in nnz calculation
+    long long nnz_calc = 2LL * split * (n - split);
+    if (nnz_calc > INT_MAX) {
+        std::cerr << "ERROR: nnz calculation exceeds INT_MAX: " << nnz_calc << std::endl;
+        return -1;
+    }
+    int nnz = static_cast<int>(nnz_calc);
+    std::cout << "Matrix width: " << n << std::endl;
     std::cout << "Split: " << split << " nnz (symmetric): " << nnz << std::endl;
+    
+    // Check GPU memory availability
+    size_t free_mem, total_mem;
+    CHECK_CUDA(cudaMemGetInfo(&free_mem, &total_mem));
+    size_t required_mem = nnz * (2 * sizeof(int) + sizeof(float)) + n * sizeof(int);
+    std::cout << "GPU Memory - Total: " << total_mem / (1024*1024) << " MB, ";
+    std::cout << "Free: " << free_mem / (1024*1024) << " MB, ";
+    std::cout << "Required: " << required_mem / (1024*1024) << " MB" << std::endl;
+    
+    if (required_mem > free_mem) {
+        std::cerr << "ERROR: Not enough GPU memory! Required: " << required_mem / (1024*1024) 
+                  << " MB, Available: " << free_mem / (1024*1024) << " MB" << std::endl;
+        return -1;
+    }
 
     CHECK_CUDA(cudaMalloc((void**)&I, nnz * sizeof(int)));
     CHECK_CUDA(cudaMalloc((void**)&J, nnz * sizeof(int)));
     CHECK_CUDA(cudaMalloc((void**)&V, nnz * sizeof(float)));
 
     create_graph_sparse(n, nnz, split, p, I, J, V);
-
+    CUDA_PRINT_MEM("after create_graph_sparse");
     CudaSparseMatrix graph = CudaSparseMatrix(I, J, V, n, nnz, SparseType::COO, MemoryType::Device);
-    graph.display();
+    CUDA_PRINT_MEM("after graph construct");
+    cudaFree(I);
+    cudaFree(J);
+    cudaFree(V);
+    I = J = nullptr; V = nullptr;
+    
+    // graph.display();
 
     char* x = generate_solution(p, split, n);
 
@@ -344,9 +447,14 @@ int main() {
 
     CHECK_CUDA(cudaMemcpy(h_x, x, n * sizeof(char), cudaMemcpyDeviceToHost));
 
-    for (int i = 0; i < n; i++)
+    // Only print first 10 elements for large matrices
+    int print_limit = std::min(n, 10);
+    for (int i = 0; i < print_limit; i++)
     {
         std::cout << "X_" << i << " " << static_cast<int>(h_x[i]) << std::endl;
+    }
+    if (n > 10) {
+        std::cout << "... (" << (n - 10) << " more elements)" << std::endl;
     }
 
     CudaSparseMatrix Q = CudaSparseMatrix(graph);
@@ -354,19 +462,17 @@ int main() {
 
     graph_to_qubo(Q);
 
-    Q.display();
+    // Q.display();
 
     // Calculate QUBO energy of the planted solution
     float energy = calculate_qubo_energy(Q, x);
     std::cout << "QUBO Energy of planted solution: " << energy << std::endl;
 
     // Run brute force solution finder to verify optimality
-    std::cout << "\n=== Starting Brute Force Verification ===" << std::endl;
-    brute_force_solution_finder(Q, h_x);
+    // std::cout << "\n=== Starting Brute Force Verification ===" << std::endl;
+    // brute_force_solution_finder(Q, h_x);
 
-    cudaFree(I);
-    cudaFree(J);
-    cudaFree(V);
+    
     cudaFree(p);
     cudaFree(x);
 

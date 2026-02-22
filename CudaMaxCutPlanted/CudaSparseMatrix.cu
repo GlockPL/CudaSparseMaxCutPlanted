@@ -120,68 +120,50 @@ bool* CudaSparseMatrix::zero_elements_in_vector(const float* input_vect, int& ze
 
 void CudaSparseMatrix::fill_diagonal(const float* diagonal_vect)
 {
-    int nnz_sum = 0;
-    int zero_sum = 0;
-    int diag_nnz = n_;
-    int resize_n = diag_nnz;
-    // TODO: Flip to non zero vector and copy only the non zero elements to new vector
-    bool* zeros_in_diag_sum = zero_elements_in_vector(diagonal_vect, zero_sum, n_);
-    bool* non_zero = non_zero_diagonal(nnz_sum);
-    
-    bool* h_non_zero = new bool[n_];
-    CHECK_CUDA(cudaMemcpy(h_non_zero, zeros_in_diag_sum, n_ * sizeof(bool), cudaMemcpyDeviceToHost));
+    // Direct CSR-level insertion: one diagonal entry per row, no COO conversion or sorting.
+    // Assumes no diagonal entries already exist in the matrix (valid for bipartite graphs).
+    // Peak memory: ~2x matrix size vs ~6x with the old COO+sort approach.
+    int new_nnz = nnz_ + n_;
 
-    for (int i = 0; i < n_; i++)
-    {
-        std::cout << "zero_in_diag_" << i << ": " << h_non_zero[i] << std::endl;
-    }
-    
-    diag_nnz -= zero_sum;
-    resize_n = diag_nnz - nnz_sum;
+    int*   new_csrOffsets;
+    int*   new_cols;
+    float* new_vals;
 
-    int* original_I, * new_I, * new_J;
-    float* new_V;
+    CHECK_CUDA(cudaMalloc((void**)&new_csrOffsets, (n_ + 1) * sizeof(int)));
+    CHECK_CUDA(cudaMalloc((void**)&new_cols, new_nnz * sizeof(int)));
+    CHECK_CUDA(cudaMalloc((void**)&new_vals, new_nnz * sizeof(float)));
 
-    CHECK_CUDA(cudaMalloc((void**)&original_I, (nnz_) * sizeof(int)));
-    CHECK_CUDA(cudaMalloc((void**)&new_I, (nnz_ + resize_n) * sizeof(int)));
-    CHECK_CUDA(cudaMalloc((void**)&new_J, (nnz_ + resize_n) * sizeof(int)));
-    CHECK_CUDA(cudaMalloc((void**)&new_V, (nnz_ + resize_n) * sizeof(float)));
+    // new_csrOffsets[i] = old_csrOffsets[i] + i  (each row i gains exactly one entry)
+    int gridSizeOff = (n_ + 1 + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    shift_offsets<<<gridSizeOff, BLOCK_SIZE>>>(d_csrOffsets_, new_csrOffsets, n_);
+    CHECK_CUDA(cudaGetLastError());
 
-    csrTorows(d_csrOffsets_, original_I, n_, nnz_, SparseType::CSR);
-
-    CHECK_CUDA(cudaMemcpy(new_I, original_I, nnz_ * sizeof(int), cudaMemcpyDeviceToDevice));
-    CHECK_CUDA(cudaMemcpy(new_J, d_cols_, nnz_ * sizeof(int), cudaMemcpyDeviceToDevice));
-    CHECK_CUDA(cudaMemcpy(new_V, d_vals_, nnz_ * sizeof(float), cudaMemcpyDeviceToDevice));
-
-    int gridSize = ((nnz_+n_)+BLOCK_SIZE - 1) / BLOCK_SIZE;
-    set_diagonal << <gridSize, BLOCK_SIZE >> > (new_I, new_J, new_V, non_zero, diagonal_vect, nnz_, resize_n);
+    // One thread per row: copy existing columns and insert diagonal in sorted position
+    int gridSizeRows = (n_ + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    insert_diagonal_csr<<<gridSizeRows, BLOCK_SIZE>>>(
+        d_csrOffsets_, d_cols_, d_vals_,
+        new_csrOffsets, new_cols, new_vals,
+        diagonal_vect, n_);
+    CHECK_CUDA(cudaGetLastError());
     CHECK_CUDA(cudaDeviceSynchronize());
-    thrust::device_ptr<int> dev_I(new_I);
-    thrust::device_ptr<int> dev_J(new_J);
-    thrust::device_ptr<float> dev_V(new_V);
 
-    // First, sort by the secondary key (J) using stable sort
-    thrust::stable_sort_by_key(dev_J, dev_J + (nnz_ + resize_n), thrust::make_zip_iterator(thrust::make_tuple(dev_I, dev_V)));
+    // Swap pointers directly — no extra copy, frees old arrays immediately
+    CHECK_CUDA(cudaFree(d_csrOffsets_));
+    CHECK_CUDA(cudaFree(d_cols_));
+    CHECK_CUDA(cudaFree(d_vals_));
+    CHECK_CUSPARSE(cusparseDestroySpMat(matDescr_));
 
-    // Then, sort by the primary key (I) using stable sort to maintain the order of the secondary key
-    thrust::stable_sort_by_key(dev_I, dev_I + (nnz_ + resize_n), thrust::make_zip_iterator(thrust::make_tuple(dev_J, dev_V)));
+    d_csrOffsets_ = new_csrOffsets;
+    d_cols_       = new_cols;
+    d_vals_       = new_vals;
+    nnz_          = new_nnz;
 
-    float* h_new_I = new float[nnz_+resize_n];
-    CHECK_CUDA(cudaMemcpy(h_new_I, new_V, (nnz_ + resize_n) * sizeof(float), cudaMemcpyDeviceToHost));
+    CHECK_CUSPARSE(cusparseCreateCsr(&matDescr_, n_, n_, nnz_,
+        d_csrOffsets_, d_cols_, d_vals_,
+        csr_row_ind_type_, csr_col_ind_type_,
+        index_base_, valueType_));
 
-    for (int i = 0; i < nnz_ + resize_n; i++)
-    {
-        std::cout << "Copied V_" << i << ": " << h_new_I[i] << std::endl;
-    }
-
-    updateData(new_I, new_J, new_V, nnz_ + resize_n, SparseType::COO, MemoryType::Device);
-
-    CHECK_CUDA(cudaFree(original_I));
-    CHECK_CUDA(cudaFree(new_I));
-    CHECK_CUDA(cudaFree(new_J));
-    CHECK_CUDA(cudaFree(new_V));
-
-    std::cout << "Total non zero elements on the diagonal: " << nnz_sum << std::endl;
+    std::cout << "Diagonal inserted: " << n_ << " entries added" << std::endl;
 }
 
 bool* CudaSparseMatrix::non_zero_diagonal(int& nnz_diag_sum)
